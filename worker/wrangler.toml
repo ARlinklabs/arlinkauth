@@ -9,4 +9,4 @@ port = 8787
 [[d1_databases]]
 binding = "DB"
 database_name = "arlinkauth-db"
-database_id = "45742df7-97eb-411e-bc2b-99db705fb6bd"
+database_id = "23f6ac8e-f316-4a13-9590-3fc2b0f8a2a8"

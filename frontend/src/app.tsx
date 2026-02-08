@@ -2,10 +2,8 @@ import "./index.css";
 import { AuthProvider } from "arlinkauth/react";
 import { Dashboard } from "./components/dashboard";
 
-// Use local worker if BUN_PUBLIC_USE_LOCAL_API is set, otherwise use production
-const API_URL = process.env.BUN_PUBLIC_USE_LOCAL_API === "true" 
-  ? "http://localhost:8787" 
-  : "https://arlinkauth.ankushkun.workers.dev";
+// Use env var if set, otherwise default to production
+const API_URL = import.meta.env?.BUN_PUBLIC_API_URL || "https://arlinkauth.contact-arlink.workers.dev";
 
 export function App() {
   return (

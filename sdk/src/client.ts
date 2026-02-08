@@ -26,9 +26,24 @@ export type LoginResult = {
 };
 
 const DEFAULT_TOKEN_KEY = "arlinkauth_token";
+const PROD_API_URL = "https://arlinkauth.contact-arlink.workers.dev";
+
+function resolveApiUrl(apiUrl?: string): string {
+  if (apiUrl) return apiUrl;
+  try {
+    const g = globalThis as Record<string, unknown>;
+    const proc = g.process as { env?: Record<string, string | undefined> } | undefined;
+    if (proc?.env?.ARLINKAUTH_API_URL) {
+      return proc.env.ARLINKAUTH_API_URL;
+    }
+  } catch {
+    // process.env may not exist in browser environments
+  }
+  return PROD_API_URL;
+}
 
 export function createWauthClient(options: WauthClientOptions) {
-  const { apiUrl } = options;
+  const apiUrl = resolveApiUrl(options.apiUrl);
   const tokenKey = options.tokenKey ?? DEFAULT_TOKEN_KEY;
 
   const listeners = new Set<AuthChangeListener>();

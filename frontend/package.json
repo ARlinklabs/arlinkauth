@@ -5,8 +5,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "BUN_PUBLIC_USE_LOCAL_API=true bun --hot src/index.ts",
-    "dev:prod": "BUN_PUBLIC_USE_LOCAL_API=false bun --hot src/index.ts",
+    "dev": "BUN_PUBLIC_API_URL=http://localhost:8787 bun --hot src/index.ts",
+    "dev:prod": "bun --hot src/index.ts",
     "start": "NODE_ENV=production bun src/index.ts",
     "build": "bun run build.ts"
   },

@@ -15,9 +15,9 @@ bun add arlinkauth
 ```typescript
 import { createArlinkAuthClient } from 'arlinkauth';
 
-const auth = createArlinkAuthClient({
-  apiUrl: 'https://your-worker.workers.dev'
-});
+const auth = createArlinkAuthClient({});
+// Uses production URL by default
+// Set ARLINKAUTH_API_URL env var in development to override
 
 // Initialize (checks for existing session)
 await auth.init();
@@ -49,7 +49,7 @@ import { AuthProvider, useAuth } from 'arlinkauth/react';
 
 function App() {
   return (
-    <AuthProvider apiUrl="https://your-worker.workers.dev">
+    <AuthProvider>
       <YourApp />
     </AuthProvider>
   );

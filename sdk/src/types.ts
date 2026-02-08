@@ -118,8 +118,8 @@ export type DispatchResult = {
 // ── Client Types ────────────────────────────────────────
 
 export type WauthClientOptions = {
-  /** Base URL of the wauth worker (e.g. "https://wauth.example.workers.dev") */
-  apiUrl: string;
+  /** Base URL of the wauth worker. Defaults to production URL unless ARLINKAUTH_API_URL env var is set. */
+  apiUrl?: string;
   /** localStorage key for the JWT. Default: "wauth_token" */
   tokenKey?: string;
 };

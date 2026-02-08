@@ -126,28 +126,24 @@ const app = new Hono<AppEnv>();
 
 // CORS - Allow all origins
 app.use("*", async (c, next) => {
-  const origin = c.req.header("origin");
+  const origin = c.req.header("origin") || "*";
   
   // Handle preflight
-  if (c.req.method === "OPTIONS" && origin) {
+  if (c.req.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
       headers: {
         "Access-Control-Allow-Origin": origin,
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
-        "Access-Control-Allow-Credentials": "true",
       },
     });
   }
   
   // Set CORS headers for all origins
-  if (origin) {
-    c.header("Access-Control-Allow-Origin", origin);
-    c.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    c.header("Access-Control-Allow-Credentials", "true");
-  }
+  c.header("Access-Control-Allow-Origin", origin);
+  c.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   
   await next();
 });
@@ -419,11 +415,21 @@ app.get("/auth/github", (c) => {
     state,
   });
 
-  // Get the frontend origin from referer
+  // Get the frontend origin from query param (preferred), referer, or fallback
+  const originParam = c.req.query("origin");
   const referer = c.req.header("referer");
-  let frontendOrigin = c.env.FRONTEND_URL; // fallback
+  let frontendOrigin = c.env.FRONTEND_URL.split(",")[0].trim();
   
-  if (referer) {
+  if (originParam) {
+    try {
+      // Validate it's a proper origin
+      frontendOrigin = new URL(originParam).origin;
+    } catch {
+      // Invalid origin param, try referer
+    }
+  }
+  
+  if (!originParam && referer) {
     try {
       frontendOrigin = new URL(referer).origin;
     } catch {
@@ -536,11 +542,21 @@ app.get("/auth/google", (c) => {
     prompt: "consent",
   });
 
-  // Get the frontend origin from referer
+  // Get the frontend origin from query param (preferred), referer, or fallback
+  const originParam = c.req.query("origin");
   const referer = c.req.header("referer");
-  let frontendOrigin = c.env.FRONTEND_URL; // fallback
+  let frontendOrigin = c.env.FRONTEND_URL.split(",")[0].trim();
   
-  if (referer) {
+  if (originParam) {
+    try {
+      // Validate it's a proper origin
+      frontendOrigin = new URL(originParam).origin;
+    } catch {
+      // Invalid origin param, try referer
+    }
+  }
+  
+  if (!originParam && referer) {
     try {
       frontendOrigin = new URL(referer).origin;
     } catch {

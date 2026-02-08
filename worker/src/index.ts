@@ -569,77 +569,82 @@ app.get("/auth/google", (c) => {
 });
 
 app.get("/auth/google/callback", async (c) => {
-  const code = c.req.query("code");
-  const state = c.req.query("state");
-  const stored = getStoredOAuthState(c);
+  try {
+    const code = c.req.query("code");
+    const state = c.req.query("state");
+    const stored = getStoredOAuthState(c);
 
-  if (!code || !state || !stored || state !== stored.state) {
-    return c.json({ error: "Invalid OAuth state" }, 400);
+    if (!code || !state || !stored || state !== stored.state) {
+      return c.json({ error: "Invalid OAuth state", debug: { hasCode: !!code, hasState: !!state, hasStored: !!stored } }, 400);
+    }
+    
+    const frontendOrigin = stored.frontendOrigin;
+
+    const redirectUri = new URL("/auth/google/callback", c.req.url).toString();
+
+    // Exchange code for access token
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        client_id: c.env.GOOGLE_CLIENT_ID,
+        client_secret: c.env.GOOGLE_CLIENT_SECRET,
+        code,
+        grant_type: "authorization_code",
+        redirect_uri: redirectUri,
+      }),
+    });
+
+    const tokenData = (await tokenRes.json()) as {
+      access_token?: string;
+      id_token?: string;
+      error?: string;
+    };
+
+    if (!tokenData.access_token) {
+      return c.json({ error: "Failed to get access token", details: tokenData }, 400);
+    }
+
+    // Fetch Google user info
+    const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+      },
+    });
+
+    const googleUser = (await userRes.json()) as {
+      id: string;
+      email: string;
+      verified_email: boolean;
+      name: string;
+      picture: string;
+    };
+
+    // Create or update user
+    const userId = await ensureUserAndWallet(c.env.DB, c.env.WALLET_ENCRYPTION_KEY, {
+      provider: "google",
+      providerId: googleUser.id,
+      email: googleUser.verified_email ? googleUser.email : null,
+      name: googleUser.name,
+      avatarUrl: googleUser.picture,
+      accessToken: tokenData.access_token,
+    });
+
+    // Issue JWT
+    const jwt = await sign(
+      { sub: userId, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 },
+      c.env.JWT_SECRET,
+      "HS256"
+    );
+
+    clearOAuthStateCookie(c);
+    return c.html(generateCallbackHtml(jwt, frontendOrigin));
+  } catch (err) {
+    console.error("[auth/google/callback] Error:", err);
+    return c.json({ error: "OAuth callback failed", details: err instanceof Error ? err.message : String(err) }, 500);
   }
-  
-  const frontendOrigin = stored.frontendOrigin;
-
-  const redirectUri = new URL("/auth/google/callback", c.req.url).toString();
-
-  // Exchange code for access token
-  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      client_id: c.env.GOOGLE_CLIENT_ID,
-      client_secret: c.env.GOOGLE_CLIENT_SECRET,
-      code,
-      grant_type: "authorization_code",
-      redirect_uri: redirectUri,
-    }),
-  });
-
-  const tokenData = (await tokenRes.json()) as {
-    access_token?: string;
-    id_token?: string;
-    error?: string;
-  };
-
-  if (!tokenData.access_token) {
-    return c.json({ error: "Failed to get access token", details: tokenData }, 400);
-  }
-
-  // Fetch Google user info
-  const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-    headers: {
-      Authorization: `Bearer ${tokenData.access_token}`,
-    },
-  });
-
-  const googleUser = (await userRes.json()) as {
-    id: string;
-    email: string;
-    verified_email: boolean;
-    name: string;
-    picture: string;
-  };
-
-  // Create or update user
-  const userId = await ensureUserAndWallet(c.env.DB, c.env.WALLET_ENCRYPTION_KEY, {
-    provider: "google",
-    providerId: googleUser.id,
-    email: googleUser.verified_email ? googleUser.email : null,
-    name: googleUser.name,
-    avatarUrl: googleUser.picture,
-    accessToken: tokenData.access_token,
-  });
-
-  // Issue JWT
-  const jwt = await sign(
-    { sub: userId, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 },
-    c.env.JWT_SECRET,
-    "HS256"
-  );
-
-  clearOAuthStateCookie(c);
-  return c.html(generateCallbackHtml(jwt, frontendOrigin));
 });
 
 // ── JWT Auth Middleware (for /api/*) ───────────────────

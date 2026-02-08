@@ -80,7 +80,8 @@ export function createWauthClient(options) {
     /** Open a popup for OAuth login with the specified provider */
     function loginWithProvider(provider) {
         return new Promise((resolve) => {
-            const loginUrl = `${apiUrl}/auth/${provider}`;
+            // Pass origin explicitly to ensure it survives the OAuth redirect chain
+            const loginUrl = `${apiUrl}/auth/${provider}?origin=${encodeURIComponent(window.location.origin)}`;
             const width = 500;
             const height = 700;
             const left = window.screenX + (window.outerWidth - width) / 2;

@@ -2,16 +2,24 @@
 
 export type WauthUser = {
   id: string;
-  github_id: number;
-  github_username: string;
-  github_name: string | null;
-  github_email: string | null;
-  github_avatar_url: string | null;
-  github_access_token: string;
+  email: string | null;
+  name: string | null;
+  avatar_url: string | null;
+  // GitHub provider (optional)
+  github_id: number | null;
+  github_username: string | null;
+  github_access_token: string | null;
+  // Google provider (optional)
+  google_id: string | null;
+  google_access_token: string | null;
+  // Wallet
   arweave_address: string | null;
+  // Timestamps
   created_at: string;
   updated_at: string;
 };
+
+export type OAuthProvider = "github" | "google";
 
 // ── Wallet Action Types ──────────────────────────────────
 

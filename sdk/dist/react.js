@@ -17,6 +17,8 @@ export function AuthProvider({ children, ...options }) {
         isLoading: authState.isLoading,
         isAuthenticated: authState.isAuthenticated,
         login: client.login,
+        loginWithGithub: client.loginWithGithub,
+        loginWithGoogle: client.loginWithGoogle,
         logout: client.logout,
         getToken: client.getToken,
         client,

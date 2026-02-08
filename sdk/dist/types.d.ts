@@ -1,15 +1,16 @@
 export type WauthUser = {
     id: string;
-    github_id: number;
-    github_username: string;
-    github_name: string | null;
-    github_email: string | null;
-    github_avatar_url: string | null;
-    github_access_token: string;
+    email: string | null;
+    name: string | null;
+    avatar_url: string | null;
+    github_id: number | null;
+    github_username: string | null;
+    google_id: string | null;
     arweave_address: string | null;
     created_at: string;
     updated_at: string;
 };
+export type OAuthProvider = "github" | "google";
 export declare enum WalletAction {
     SIGN = "sign",
     SIGN_DATA_ITEM = "signDataItem",

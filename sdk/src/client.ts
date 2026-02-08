@@ -4,6 +4,7 @@ import {
   type WauthUser,
   type AuthState,
   type AuthChangeListener,
+  type OAuthProvider,
   type SignTransactionInput,
   type SignTransactionResult,
   type SignDataItemInput,
@@ -110,10 +111,10 @@ export function createWauthClient(options: WauthClientOptions) {
 
   // ── Auth Actions ────────────────────────────────────
 
-  /** Open a popup for GitHub OAuth login (no page refresh) */
-  function login(): Promise<boolean> {
+  /** Open a popup for OAuth login with the specified provider */
+  function loginWithProvider(provider: OAuthProvider): Promise<boolean> {
     return new Promise((resolve) => {
-      const loginUrl = `${apiUrl}/auth/github`;
+      const loginUrl = `${apiUrl}/auth/${provider}`;
       const width = 500;
       const height = 700;
       const left = window.screenX + (window.outerWidth - width) / 2;
@@ -167,6 +168,21 @@ export function createWauthClient(options: WauthClientOptions) {
         }
       }, 500);
     });
+  }
+
+  /** Open a popup for GitHub OAuth login (no page refresh) */
+  function login(): Promise<boolean> {
+    return loginWithProvider("github");
+  }
+
+  /** Open a popup for GitHub OAuth login */
+  function loginWithGithub(): Promise<boolean> {
+    return loginWithProvider("github");
+  }
+
+  /** Open a popup for Google OAuth login */
+  function loginWithGoogle(): Promise<boolean> {
+    return loginWithProvider("google");
   }
 
   /**
@@ -326,6 +342,9 @@ export function createWauthClient(options: WauthClientOptions) {
   return {
     init,
     login,
+    loginWithGithub,
+    loginWithGoogle,
+    loginWithProvider,
     logout,
     handleCallback,
     isAuthenticated,

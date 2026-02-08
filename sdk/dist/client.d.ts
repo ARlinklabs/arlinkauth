@@ -1,7 +1,10 @@
-import { type WauthClientOptions, type WauthUser, type AuthState, type AuthChangeListener, type SignTransactionInput, type SignTransactionResult, type SignDataItemInput, type SignDataItemResult, type SignatureInput, type SignatureResult, type DispatchInput, type DispatchResult } from "./types.js";
+import { type WauthClientOptions, type WauthUser, type AuthState, type AuthChangeListener, type OAuthProvider, type SignTransactionInput, type SignTransactionResult, type SignDataItemInput, type SignDataItemResult, type SignatureInput, type SignatureResult, type DispatchInput, type DispatchResult } from "./types.js";
 export declare function createWauthClient(options: WauthClientOptions): {
     init: () => Promise<AuthState>;
     login: () => Promise<boolean>;
+    loginWithGithub: () => Promise<boolean>;
+    loginWithGoogle: () => Promise<boolean>;
+    loginWithProvider: (provider: OAuthProvider) => Promise<boolean>;
     logout: () => void;
     handleCallback: () => boolean;
     isAuthenticated: () => boolean;

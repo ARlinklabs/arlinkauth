@@ -6,6 +6,8 @@ type AuthContextValue = {
     isLoading: boolean;
     isAuthenticated: boolean;
     login: () => void;
+    loginWithGithub: () => void;
+    loginWithGoogle: () => void;
     logout: () => void;
     getToken: () => string | null;
     client: WauthClient;
@@ -17,5 +19,5 @@ type AuthProviderProps = WauthClientOptions & {
 export declare function AuthProvider({ children, ...options }: AuthProviderProps): import("react/jsx-runtime").JSX.Element;
 export declare function useAuth(): AuthContextValue;
 export type { WauthUser, AuthState, WauthClientOptions };
-export type { ArweaveTag, SignTransactionInput, SignTransactionResult, SignDataItemInput, SignDataItemResult, SignatureInput, SignatureResult, BundlerType, DispatchInput, DispatchResult, } from "./types.js";
+export type { OAuthProvider, ArweaveTag, SignTransactionInput, SignTransactionResult, SignDataItemInput, SignDataItemResult, SignatureInput, SignatureResult, BundlerType, DispatchInput, DispatchResult, } from "./types.js";
 export { WalletAction } from "./types.js";

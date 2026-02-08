@@ -77,10 +77,10 @@ export function createWauthClient(options) {
         return res.json();
     }
     // ── Auth Actions ────────────────────────────────────
-    /** Open a popup for GitHub OAuth login (no page refresh) */
-    function login() {
+    /** Open a popup for OAuth login with the specified provider */
+    function loginWithProvider(provider) {
         return new Promise((resolve) => {
-            const loginUrl = `${apiUrl}/auth/github`;
+            const loginUrl = `${apiUrl}/auth/${provider}`;
             const width = 500;
             const height = 700;
             const left = window.screenX + (window.outerWidth - width) / 2;
@@ -124,6 +124,18 @@ export function createWauthClient(options) {
                 }
             }, 500);
         });
+    }
+    /** Open a popup for GitHub OAuth login (no page refresh) */
+    function login() {
+        return loginWithProvider("github");
+    }
+    /** Open a popup for GitHub OAuth login */
+    function loginWithGithub() {
+        return loginWithProvider("github");
+    }
+    /** Open a popup for Google OAuth login */
+    function loginWithGoogle() {
+        return loginWithProvider("google");
     }
     /**
      * Check for existing token in localStorage.
@@ -265,6 +277,9 @@ export function createWauthClient(options) {
     return {
         init,
         login,
+        loginWithGithub,
+        loginWithGoogle,
+        loginWithProvider,
         logout,
         handleCallback,
         isAuthenticated,

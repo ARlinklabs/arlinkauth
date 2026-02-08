@@ -1,5 +1,5 @@
 import "./index.css";
-import { AuthProvider } from "@wauth/sdk/react";
+import { AuthProvider } from "arlinkauth/react";
 import { Dashboard } from "./components/dashboard";
 
 const API_URL = import.meta.env?.VITE_API_URL ?? "http://localhost:8787";

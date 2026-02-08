@@ -46,8 +46,13 @@ type BundlerType = keyof typeof BUNDLER_ENDPOINTS;
 
 type Bindings = {
   DB: D1Database;
+  // GitHub OAuth
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
+  // Google OAuth
+  GOOGLE_CLIENT_ID: string;
+  GOOGLE_CLIENT_SECRET: string;
+  // General
   JWT_SECRET: string;
   /** Where the client lives, used for post-login redirect */
   FRONTEND_URL: string;
@@ -73,6 +78,195 @@ app.get("/", (c) => {
   return c.json({ message: "wauth", timestamp: Date.now() });
 });
 
+// ── Helper: Create or update user and ensure wallet exists ───
+
+async function ensureUserAndWallet(
+  db: D1Database,
+  walletEncryptionKey: string,
+  options: {
+    provider: "github" | "google";
+    providerId: string | number;
+    email: string | null;
+    name: string | null;
+    avatarUrl: string | null;
+    accessToken: string;
+    // GitHub-specific
+    githubUsername?: string;
+  }
+): Promise<string> {
+  const { provider, providerId, email, name, avatarUrl, accessToken, githubUsername } = options;
+
+  // Check if user exists by provider ID
+  const providerIdColumn = provider === "github" ? "github_id" : "google_id";
+  const existingUser = await db.prepare(
+    `SELECT id FROM users WHERE ${providerIdColumn} = ?1`
+  )
+    .bind(providerId)
+    .first<{ id: string }>();
+
+  let userId: string;
+
+  if (!existingUser) {
+    // Check if user exists by email (to link accounts)
+    let userByEmail: { id: string } | null = null;
+    if (email) {
+      userByEmail = await db.prepare(
+        `SELECT id FROM users WHERE email = ?1`
+      )
+        .bind(email)
+        .first<{ id: string }>();
+    }
+
+    if (userByEmail) {
+      // Link this provider to existing account
+      userId = userByEmail.id;
+      if (provider === "github") {
+        await db.prepare(
+          `UPDATE users SET
+            github_id = ?1, github_username = ?2, github_access_token = ?3,
+            name = COALESCE(name, ?4), avatar_url = COALESCE(avatar_url, ?5),
+            updated_at = datetime('now')
+          WHERE id = ?6`
+        )
+          .bind(providerId, githubUsername, accessToken, name, avatarUrl, userId)
+          .run();
+      } else {
+        await db.prepare(
+          `UPDATE users SET
+            google_id = ?1, google_access_token = ?2,
+            name = COALESCE(name, ?3), avatar_url = COALESCE(avatar_url, ?4),
+            updated_at = datetime('now')
+          WHERE id = ?5`
+        )
+          .bind(providerId, accessToken, name, avatarUrl, userId)
+          .run();
+      }
+    } else {
+      // Create new user
+      userId = crypto.randomUUID();
+      if (provider === "github") {
+        await db.prepare(
+          `INSERT INTO users (id, email, name, avatar_url, github_id, github_username, github_access_token)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`
+        )
+          .bind(userId, email, name, avatarUrl, providerId, githubUsername, accessToken)
+          .run();
+      } else {
+        await db.prepare(
+          `INSERT INTO users (id, email, name, avatar_url, google_id, google_access_token)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6)`
+        )
+          .bind(userId, email, name, avatarUrl, providerId, accessToken)
+          .run();
+      }
+
+      // Generate Arweave wallet for new user
+      const { jwk, address } = await generateArweaveWallet();
+      const { encrypted, salt } = await encryptJwk(jwk, walletEncryptionKey);
+      await db.prepare(
+        `INSERT INTO wallets (id, user_id, address, encrypted_jwk, salt) VALUES (?1, ?2, ?3, ?4, ?5)`
+      )
+        .bind(crypto.randomUUID(), userId, address, encrypted, salt)
+        .run();
+    }
+  } else {
+    // Update existing user
+    userId = existingUser.id;
+    if (provider === "github") {
+      await db.prepare(
+        `UPDATE users SET
+          github_username = ?1, github_access_token = ?2,
+          email = COALESCE(?3, email), name = COALESCE(?4, name), avatar_url = COALESCE(?5, avatar_url),
+          updated_at = datetime('now')
+        WHERE id = ?6`
+      )
+        .bind(githubUsername, accessToken, email, name, avatarUrl, userId)
+        .run();
+    } else {
+      await db.prepare(
+        `UPDATE users SET
+          google_access_token = ?1,
+          email = COALESCE(?2, email), name = COALESCE(?3, name), avatar_url = COALESCE(?4, avatar_url),
+          updated_at = datetime('now')
+        WHERE id = ?5`
+      )
+        .bind(accessToken, email, name, avatarUrl, userId)
+        .run();
+    }
+
+    // Ensure wallet exists
+    const existingWallet = await db.prepare(
+      `SELECT id FROM wallets WHERE user_id = ?1 LIMIT 1`
+    )
+      .bind(userId)
+      .first();
+
+    if (!existingWallet) {
+      const { jwk, address } = await generateArweaveWallet();
+      const { encrypted, salt } = await encryptJwk(jwk, walletEncryptionKey);
+      await db.prepare(
+        `INSERT INTO wallets (id, user_id, address, encrypted_jwk, salt) VALUES (?1, ?2, ?3, ?4, ?5)`
+      )
+        .bind(crypto.randomUUID(), userId, address, encrypted, salt)
+        .run();
+    }
+  }
+
+  return userId;
+}
+
+// ── Helper: Generate OAuth callback HTML ───────────────
+
+function generateCallbackHtml(jwt: string, frontendUrl: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head><title>Authenticating...</title></head>
+<body>
+<p>Authenticating, please wait...</p>
+<script>
+  if (window.opener) {
+    window.opener.postMessage(
+      { type: "wauth:callback", token: "${jwt}" },
+      "${frontendUrl}"
+    );
+    window.close();
+  } else {
+    window.location.href = "${frontendUrl}?token=${jwt}";
+  }
+</script>
+</body>
+</html>`;
+}
+
+// ── Helper: Set OAuth state cookie ─────────────────────
+
+function setOAuthStateCookie(c: { req: { url: string }; header: (name: string, value: string) => void }, state: string) {
+  const isLocalhost = new URL(c.req.url).hostname === "localhost";
+  const securePart = isLocalhost ? "" : " Secure;";
+  c.header(
+    "Set-Cookie",
+    `oauth_state=${state}; HttpOnly;${securePart} SameSite=Lax; Path=/; Max-Age=300`
+  );
+}
+
+function clearOAuthStateCookie(c: { req: { url: string }; header: (name: string, value: string) => void }) {
+  const isLocalhost = new URL(c.req.url).hostname === "localhost";
+  const securePart = isLocalhost ? "" : " Secure;";
+  c.header(
+    "Set-Cookie",
+    `oauth_state=;HttpOnly;${securePart} SameSite=Lax; Path=/; Max-Age=0`
+  );
+}
+
+function getStoredOAuthState(c: { req: { header: (name: string) => string | undefined } }): string | undefined {
+  const cookies = c.req.header("cookie") ?? "";
+  return cookies
+    .split(";")
+    .map((s) => s.trim())
+    .find((s) => s.startsWith("oauth_state="))
+    ?.split("=")[1];
+}
+
 // ── GitHub OAuth ───────────────────────────────────────
 
 app.get("/auth/github", (c) => {
@@ -85,29 +279,14 @@ app.get("/auth/github", (c) => {
     state,
   });
 
-  // Store state in a short-lived cookie so we can verify on callback
-  // Omit Secure flag on localhost so the cookie works over plain http
-  const isLocalhost = new URL(c.req.url).hostname === "localhost";
-  const securePart = isLocalhost ? "" : " Secure;";
-  c.header(
-    "Set-Cookie",
-    `oauth_state=${state}; HttpOnly;${securePart} SameSite=Lax; Path=/; Max-Age=300`
-  );
-
+  setOAuthStateCookie(c, state);
   return c.redirect(`https://github.com/login/oauth/authorize?${params}`);
 });
 
 app.get("/auth/github/callback", async (c) => {
   const code = c.req.query("code");
   const state = c.req.query("state");
-
-  // Validate state against cookie
-  const cookies = c.req.header("cookie") ?? "";
-  const storedState = cookies
-    .split(";")
-    .map((s) => s.trim())
-    .find((s) => s.startsWith("oauth_state="))
-    ?.split("=")[1];
+  const storedState = getStoredOAuthState(c);
 
   if (!code || !state || state !== storedState) {
     return c.json({ error: "Invalid OAuth state" }, 400);
@@ -157,121 +336,126 @@ app.get("/auth/github/callback", async (c) => {
     login: string;
     name: string | null;
     avatar_url: string;
-    email: string | null;
   };
 
-  // Pick the primary verified email from /user/emails (more reliable than /user)
   const emails = (await emailsRes.json()) as {
     email: string;
     primary: boolean;
     verified: boolean;
   }[];
-  const primaryEmail =
-    emails.find((e) => e.primary && e.verified)?.email ??
-    ghUser.email;
+  const primaryEmail = emails.find((e) => e.primary && e.verified)?.email ?? null;
 
-  // Check if user already exists
-  const existingUser = await c.env.DB.prepare(
-    `SELECT id FROM users WHERE github_id = ?1`
-  )
-    .bind(ghUser.id)
-    .first<{ id: string }>();
+  // Create or update user
+  const userId = await ensureUserAndWallet(c.env.DB, c.env.WALLET_ENCRYPTION_KEY, {
+    provider: "github",
+    providerId: ghUser.id,
+    email: primaryEmail,
+    name: ghUser.name,
+    avatarUrl: ghUser.avatar_url,
+    accessToken: tokenData.access_token,
+    githubUsername: ghUser.login,
+  });
 
-  const isNewUser = !existingUser;
-  let actualUserId: string;
-
-  if (isNewUser) {
-    // Create new user
-    actualUserId = crypto.randomUUID();
-    await c.env.DB.prepare(
-      `INSERT INTO users (id, github_id, github_username, github_name, github_email, github_avatar_url, github_access_token, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))`
-    )
-      .bind(actualUserId, ghUser.id, ghUser.login, ghUser.name, primaryEmail, ghUser.avatar_url, tokenData.access_token)
-      .run();
-
-    // Generate and store encrypted Arweave wallet for new user
-    const { jwk, address } = await generateArweaveWallet();
-    const { encrypted, salt } = await encryptJwk(jwk, c.env.WALLET_ENCRYPTION_KEY);
-    const walletId = crypto.randomUUID();
-
-    await c.env.DB.prepare(
-      `INSERT INTO wallets (id, user_id, address, encrypted_jwk, salt) VALUES (?1, ?2, ?3, ?4, ?5)`
-    )
-      .bind(walletId, actualUserId, address, encrypted, salt)
-      .run();
-  } else {
-    // Update existing user
-    actualUserId = existingUser.id;
-    await c.env.DB.prepare(
-      `UPDATE users SET
-         github_username = ?1,
-         github_name = ?2,
-         github_email = ?3,
-         github_avatar_url = ?4,
-         github_access_token = ?5,
-         updated_at = datetime('now')
-       WHERE id = ?6`
-    )
-      .bind(ghUser.login, ghUser.name, primaryEmail, ghUser.avatar_url, tokenData.access_token, actualUserId)
-      .run();
-
-    // Check if existing user has a wallet, if not create one
-    const existingWallet = await c.env.DB.prepare(
-      `SELECT id FROM wallets WHERE user_id = ?1 LIMIT 1`
-    )
-      .bind(actualUserId)
-      .first();
-
-    if (!existingWallet) {
-      const { jwk, address } = await generateArweaveWallet();
-      const { encrypted, salt } = await encryptJwk(jwk, c.env.WALLET_ENCRYPTION_KEY);
-      const walletId = crypto.randomUUID();
-
-      await c.env.DB.prepare(
-        `INSERT INTO wallets (id, user_id, address, encrypted_jwk, salt) VALUES (?1, ?2, ?3, ?4, ?5)`
-      )
-        .bind(walletId, actualUserId, address, encrypted, salt)
-        .run();
-    }
-  }
-
-  // Issue JWT (expires in 7 days)
+  // Issue JWT
   const jwt = await sign(
-    { sub: actualUserId, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 },
+    { sub: userId, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 },
     c.env.JWT_SECRET,
     "HS256"
   );
 
-  // Clear the oauth_state cookie
-  const isLocalhost = new URL(c.req.url).hostname === "localhost";
-  const securePart = isLocalhost ? "" : " Secure;";
-  c.header(
-    "Set-Cookie",
-    `oauth_state=;HttpOnly;${securePart} SameSite=Lax; Path=/; Max-Age=0`
+  clearOAuthStateCookie(c);
+  return c.html(generateCallbackHtml(jwt, c.env.FRONTEND_URL));
+});
+
+// ── Google OAuth ───────────────────────────────────────
+
+app.get("/auth/google", (c) => {
+  const state = crypto.randomUUID();
+  const redirectUri = new URL("/auth/google/callback", c.req.url).toString();
+  const params = new URLSearchParams({
+    client_id: c.env.GOOGLE_CLIENT_ID,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: "openid email profile",
+    state,
+    access_type: "offline",
+    prompt: "consent",
+  });
+
+  setOAuthStateCookie(c, state);
+  return c.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+});
+
+app.get("/auth/google/callback", async (c) => {
+  const code = c.req.query("code");
+  const state = c.req.query("state");
+  const storedState = getStoredOAuthState(c);
+
+  if (!code || !state || state !== storedState) {
+    return c.json({ error: "Invalid OAuth state" }, 400);
+  }
+
+  const redirectUri = new URL("/auth/google/callback", c.req.url).toString();
+
+  // Exchange code for access token
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      client_id: c.env.GOOGLE_CLIENT_ID,
+      client_secret: c.env.GOOGLE_CLIENT_SECRET,
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: redirectUri,
+    }),
+  });
+
+  const tokenData = (await tokenRes.json()) as {
+    access_token?: string;
+    id_token?: string;
+    error?: string;
+  };
+
+  if (!tokenData.access_token) {
+    return c.json({ error: "Failed to get access token", details: tokenData }, 400);
+  }
+
+  // Fetch Google user info
+  const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+    headers: {
+      Authorization: `Bearer ${tokenData.access_token}`,
+    },
+  });
+
+  const googleUser = (await userRes.json()) as {
+    id: string;
+    email: string;
+    verified_email: boolean;
+    name: string;
+    picture: string;
+  };
+
+  // Create or update user
+  const userId = await ensureUserAndWallet(c.env.DB, c.env.WALLET_ENCRYPTION_KEY, {
+    provider: "google",
+    providerId: googleUser.id,
+    email: googleUser.verified_email ? googleUser.email : null,
+    name: googleUser.name,
+    avatarUrl: googleUser.picture,
+    accessToken: tokenData.access_token,
+  });
+
+  // Issue JWT
+  const jwt = await sign(
+    { sub: userId, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 },
+    c.env.JWT_SECRET,
+    "HS256"
   );
 
-  // Return HTML that posts token to opener window (popup flow)
-  const html = `<!DOCTYPE html>
-<html>
-<head><title>Authenticating...</title></head>
-<body>
-<p>Authenticating, please wait...</p>
-<script>
-  if (window.opener) {
-    window.opener.postMessage(
-      { type: "wauth:callback", token: "${jwt}" },
-      "${c.env.FRONTEND_URL}"
-    );
-  } else {
-    // Fallback: redirect if not in popup
-    window.location.href = "${c.env.FRONTEND_URL}?token=${jwt}";
-  }
-</script>
-</body>
-</html>`;
-
-  return c.html(html);
+  clearOAuthStateCookie(c);
+  return c.html(generateCallbackHtml(jwt, c.env.FRONTEND_URL));
 });
 
 // ── JWT Auth Middleware (for /api/*) ───────────────────
@@ -302,9 +486,9 @@ app.use("/api/*", async (c, next) => {
 app.get("/api/me", async (c) => {
   const userId = c.get("userId");
   
-  // Get user info (excluding sensitive wallet data)
+  // Get user info including provider tokens
   const user = await c.env.DB.prepare(
-    `SELECT id, github_id, github_username, github_name, github_email, github_avatar_url, github_access_token, created_at, updated_at FROM users WHERE id = ?1`
+    `SELECT id, email, name, avatar_url, github_id, github_username, github_access_token, google_id, google_access_token, created_at, updated_at FROM users WHERE id = ?1`
   )
     .bind(userId)
     .first();

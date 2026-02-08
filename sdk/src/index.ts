@@ -6,6 +6,7 @@ export {
   type WauthClientOptions,
   type AuthState,
   type AuthChangeListener,
+  type OAuthProvider,
   type ArweaveTag,
   type SignTransactionInput,
   type SignTransactionResult,

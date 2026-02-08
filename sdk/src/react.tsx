@@ -16,6 +16,8 @@ type AuthContextValue = {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: () => void;
+  loginWithGithub: () => void;
+  loginWithGoogle: () => void;
   logout: () => void;
   getToken: () => string | null;
   client: WauthClient;
@@ -51,6 +53,8 @@ export function AuthProvider({ children, ...options }: AuthProviderProps) {
       isLoading: authState.isLoading,
       isAuthenticated: authState.isAuthenticated,
       login: client.login,
+      loginWithGithub: client.loginWithGithub,
+      loginWithGoogle: client.loginWithGoogle,
       logout: client.logout,
       getToken: client.getToken,
       client,
@@ -75,6 +79,7 @@ export function useAuth(): AuthContextValue {
 // Re-export types that consumers commonly need
 export type { WauthUser, AuthState, WauthClientOptions };
 export type {
+  OAuthProvider,
   ArweaveTag,
   SignTransactionInput,
   SignTransactionResult,

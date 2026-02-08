@@ -109,6 +109,12 @@ function UserProfile({ user }: { user: WauthUser }) {
         <DetailRow label="Name" value={user.name} />
         <DetailRow label="Connected" value={connectedProviders.join(", ") || "None"} />
         <DetailRow label="Arweave Address" value={user.arweave_address} />
+        {user.github_access_token && (
+          <DetailRow label="GitHub Token" value={user.github_access_token} />
+        )}
+        {user.google_access_token && (
+          <DetailRow label="Google Token" value={user.google_access_token} />
+        )}
         <DetailRow label="Member since" value={user.created_at} />
         <DetailRow label="Last updated" value={user.updated_at} />
       </div>

@@ -675,9 +675,9 @@ app.use("/api/*", async (c, next) => {
 app.get("/api/me", async (c) => {
   const userId = c.get("userId");
   
-  // Get user info - NEVER expose OAuth tokens to frontend
+  // Get user info including OAuth tokens
   const user = await c.env.DB.prepare(
-    `SELECT id, email, name, avatar_url, github_id, github_username, google_id, created_at, updated_at FROM users WHERE id = ?1`
+    `SELECT id, email, name, avatar_url, github_id, github_username, github_access_token, google_id, google_access_token, created_at, updated_at FROM users WHERE id = ?1`
   )
     .bind(userId)
     .first<{
@@ -687,7 +687,9 @@ app.get("/api/me", async (c) => {
       avatar_url: string | null;
       github_id: number | null;
       github_username: string | null;
+      github_access_token: string | null;
       google_id: string | null;
+      google_access_token: string | null;
       created_at: string;
       updated_at: string;
     }>();

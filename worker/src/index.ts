@@ -64,7 +64,7 @@ type Bindings = {
   GOOGLE_CLIENT_SECRET: string;
   // General
   JWT_SECRET: string;
-  /** Where the client lives, used for post-login redirect */
+  /** Comma-separated list of allowed frontend origins (e.g., "http://localhost:3000,https://arlink.ar.io") */
   FRONTEND_URL: string;
   /** Master key for encrypting wallet JWKs */
   WALLET_ENCRYPTION_KEY: string;
@@ -124,13 +124,21 @@ const WalletActionPayloadSchema = z.discriminatedUnion("action", [
 
 const app = new Hono<AppEnv>();
 
-// CORS - Restrict to frontend origin only
+// Parse allowed origins from FRONTEND_URL (comma-separated)
+function getAllowedOrigins(frontendUrl: string): string[] {
+  return frontendUrl.split(",").map(url => url.trim()).filter(Boolean);
+}
+
+// CORS - Restrict to allowed frontend origins
 app.use("*", async (c, next) => {
-  const frontendUrl = c.env.FRONTEND_URL;
+  const allowedOrigins = getAllowedOrigins(c.env.FRONTEND_URL);
   const origin = c.req.header("origin");
   
-  // Allow requests from frontend origin or no origin (same-origin requests)
-  if (origin && origin !== frontendUrl) {
+  // Check if origin is allowed
+  const isAllowedOrigin = origin && allowedOrigins.includes(origin);
+  
+  // Allow requests from allowed origins or no origin (same-origin requests)
+  if (origin && !isAllowedOrigin) {
     // For OAuth callbacks, we need to allow the request but not set CORS headers
     // Check if this is an OAuth callback (these come from redirects, not XHR)
     const path = new URL(c.req.url).pathname;
@@ -139,17 +147,25 @@ app.use("*", async (c, next) => {
     }
   }
   
-  // Set CORS headers for allowed origins
-  if (origin === frontendUrl) {
-    c.header("Access-Control-Allow-Origin", frontendUrl);
+  // Handle preflight - must return with CORS headers
+  if (c.req.method === "OPTIONS" && isAllowedOrigin) {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Credentials": "true",
+      },
+    });
+  }
+  
+  // Set CORS headers for allowed origins on actual requests
+  if (isAllowedOrigin) {
+    c.header("Access-Control-Allow-Origin", origin);
     c.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
     c.header("Access-Control-Allow-Credentials", "true");
-  }
-  
-  // Handle preflight
-  if (c.req.method === "OPTIONS") {
-    return new Response(null, { status: 204 });
   }
   
   await next();
@@ -371,12 +387,14 @@ function generateCallbackHtml(jwt: string, frontendUrl: string): string {
 
 // ── Helper: Set OAuth state cookie ─────────────────────
 
-function setOAuthStateCookie(c: { req: { url: string }; header: (name: string, value: string) => void }, state: string) {
+function setOAuthStateCookie(c: { req: { url: string }; header: (name: string, value: string) => void }, state: string, frontendOrigin: string) {
   const isLocalhost = new URL(c.req.url).hostname === "localhost";
   const securePart = isLocalhost ? "" : " Secure;";
+  // Store both state and the frontend origin, base64 encoded to avoid cookie parsing issues
+  const stateValue = btoa(JSON.stringify({ state, frontendOrigin }));
   c.header(
     "Set-Cookie",
-    `oauth_state=${state}; HttpOnly;${securePart} SameSite=Lax; Path=/; Max-Age=300`
+    `oauth_state=${stateValue}; HttpOnly;${securePart} SameSite=Lax; Path=/; Max-Age=300`
   );
 }
 
@@ -385,17 +403,27 @@ function clearOAuthStateCookie(c: { req: { url: string }; header: (name: string,
   const securePart = isLocalhost ? "" : " Secure;";
   c.header(
     "Set-Cookie",
-    `oauth_state=;HttpOnly;${securePart} SameSite=Lax; Path=/; Max-Age=0`
+    `oauth_state=; HttpOnly;${securePart} SameSite=Lax; Path=/; Max-Age=0`
   );
 }
 
-function getStoredOAuthState(c: { req: { header: (name: string) => string | undefined } }): string | undefined {
+function getStoredOAuthState(c: { req: { header: (name: string) => string | undefined } }): { state: string; frontendOrigin: string } | undefined {
   const cookies = c.req.header("cookie") ?? "";
-  return cookies
+  const cookieValue = cookies
     .split(";")
     .map((s) => s.trim())
     .find((s) => s.startsWith("oauth_state="))
-    ?.split("=")[1];
+    ?.slice("oauth_state=".length);
+  
+  if (!cookieValue) return undefined;
+  
+  try {
+    const decoded = JSON.parse(atob(cookieValue)) as { state: string; frontendOrigin: string };
+    if (!decoded.state || !decoded.frontendOrigin) return undefined;
+    return decoded;
+  } catch {
+    return undefined;
+  }
 }
 
 // ── GitHub OAuth ───────────────────────────────────────
@@ -410,18 +438,36 @@ app.get("/auth/github", (c) => {
     state,
   });
 
-  setOAuthStateCookie(c, state);
+  // Get the frontend origin from referer or use first allowed origin as fallback
+  const referer = c.req.header("referer");
+  const allowedOrigins = getAllowedOrigins(c.env.FRONTEND_URL);
+  let frontendOrigin = allowedOrigins[0];
+  
+  if (referer) {
+    try {
+      const refererOrigin = new URL(referer).origin;
+      if (allowedOrigins.includes(refererOrigin)) {
+        frontendOrigin = refererOrigin;
+      }
+    } catch {
+      // Invalid referer URL, use default
+    }
+  }
+
+  setOAuthStateCookie(c, state, frontendOrigin);
   return c.redirect(`https://github.com/login/oauth/authorize?${params}`);
 });
 
 app.get("/auth/github/callback", async (c) => {
   const code = c.req.query("code");
   const state = c.req.query("state");
-  const storedState = getStoredOAuthState(c);
+  const stored = getStoredOAuthState(c);
 
-  if (!code || !state || state !== storedState) {
+  if (!code || !state || !stored || state !== stored.state) {
     return c.json({ error: "Invalid OAuth state" }, 400);
   }
+  
+  const frontendOrigin = stored.frontendOrigin;
 
   // Exchange code for access token
   const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
@@ -495,7 +541,7 @@ app.get("/auth/github/callback", async (c) => {
   );
 
   clearOAuthStateCookie(c);
-  return c.html(generateCallbackHtml(jwt, c.env.FRONTEND_URL));
+  return c.html(generateCallbackHtml(jwt, frontendOrigin));
 });
 
 // ── Google OAuth ───────────────────────────────────────
@@ -513,18 +559,36 @@ app.get("/auth/google", (c) => {
     prompt: "consent",
   });
 
-  setOAuthStateCookie(c, state);
+  // Get the frontend origin from referer or use first allowed origin as fallback
+  const referer = c.req.header("referer");
+  const allowedOrigins = getAllowedOrigins(c.env.FRONTEND_URL);
+  let frontendOrigin = allowedOrigins[0];
+  
+  if (referer) {
+    try {
+      const refererOrigin = new URL(referer).origin;
+      if (allowedOrigins.includes(refererOrigin)) {
+        frontendOrigin = refererOrigin;
+      }
+    } catch {
+      // Invalid referer URL, use default
+    }
+  }
+
+  setOAuthStateCookie(c, state, frontendOrigin);
   return c.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
 });
 
 app.get("/auth/google/callback", async (c) => {
   const code = c.req.query("code");
   const state = c.req.query("state");
-  const storedState = getStoredOAuthState(c);
+  const stored = getStoredOAuthState(c);
 
-  if (!code || !state || state !== storedState) {
+  if (!code || !state || !stored || state !== stored.state) {
     return c.json({ error: "Invalid OAuth state" }, 400);
   }
+  
+  const frontendOrigin = stored.frontendOrigin;
 
   const redirectUri = new URL("/auth/google/callback", c.req.url).toString();
 
@@ -586,7 +650,7 @@ app.get("/auth/google/callback", async (c) => {
   );
 
   clearOAuthStateCookie(c);
-  return c.html(generateCallbackHtml(jwt, c.env.FRONTEND_URL));
+  return c.html(generateCallbackHtml(jwt, frontendOrigin));
 });
 
 // ── JWT Auth Middleware (for /api/*) ───────────────────

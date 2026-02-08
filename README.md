@@ -1,25 +1,5 @@
 # Arlink Auth
 
-Authentication for Arweave apps. Sign in with GitHub or Google, get an Arweave wallet automatically.
-
-## What This Does
-
-Arlink Auth solves a common problem: you want users to interact with Arweave, but asking them to install a browser extension or manage a wallet is too much friction.
-
-With Arlink Auth, users sign in with their existing GitHub or Google account. Behind the scenes, we generate an Arweave wallet for them and keep it encrypted on the server. When they need to sign a transaction, your app asks our API, and we handle it.
-
-The user never sees a seed phrase. They just click "Sign in with GitHub" and they're ready to use Arweave.
-
-## How It Works
-
-1. User clicks login in your app
-2. OAuth popup opens (GitHub or Google)
-3. After login, we check if they already have an account
-4. If new, we generate an Arweave wallet and encrypt it with AES-256-GCM
-5. User gets a JWT token, your app can now sign transactions on their behalf
-
-The wallet private key never leaves the server. Your frontend only sees the wallet address.
-
 ## Project Structure
 
 ```
@@ -75,6 +55,11 @@ GOOGLE_CLIENT_SECRET=your_google_client_secret
 JWT_SECRET=generate_a_random_string_here
 WALLET_ENCRYPTION_KEY=generate_another_random_string_here
 FRONTEND_URL=http://localhost:3000
+```
+
+For production, you can specify multiple frontend origins (comma-separated):
+```
+FRONTEND_URL=http://localhost:3000,https://arlink.ar.io
 ```
 
 Generate random strings with:
@@ -183,12 +168,12 @@ function YourApp() {
 
 The worker exposes these endpoints:
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/auth/github` | GET | Start GitHub OAuth flow |
-| `/auth/google` | GET | Start Google OAuth flow |
-| `/api/me` | GET | Get current user info (requires auth) |
-| `/api/wallet/action` | POST | Sign transactions (requires auth) |
+| Endpoint             | Method | Description                           |
+| -------------------- | ------ | ------------------------------------- |
+| `/auth/github`       | GET    | Start GitHub OAuth flow               |
+| `/auth/google`       | GET    | Start Google OAuth flow               |
+| `/api/me`            | GET    | Get current user info (requires auth) |
+| `/api/wallet/action` | POST   | Sign transactions (requires auth)     |
 
 ### Wallet Actions
 

@@ -12,8 +12,11 @@ GOOGLE_CLIENT_SECRET=your-google-client-secret
 # JWT Secret - Generate with: openssl rand -base64 32
 JWT_SECRET=generate-a-random-32-byte-secret-here
 
-# Frontend URL for CORS and OAuth callbacks
+# Frontend URLs for CORS and OAuth callbacks (comma-separated for multiple origins)
+# For local development:
 FRONTEND_URL=http://localhost:3000
+# For production with multiple origins:
+# FRONTEND_URL=http://localhost:3000,https://arlink.ar.io
 
 # Wallet Encryption Key - Generate with: openssl rand -base64 32
 # CRITICAL: If you lose this key, all encrypted wallets become unrecoverable

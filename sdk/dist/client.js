@@ -93,25 +93,34 @@ export function createWauthClient(options) {
             }
             // Listen for message from popup
             const handleMessage = async (event) => {
-                // Verify origin matches our API
+                // Strict origin validation
                 if (event.origin !== new URL(apiUrl).origin)
                     return;
-                if (event.data?.type === "wauth:callback" && event.data?.token) {
-                    window.removeEventListener("message", handleMessage);
-                    popup.close();
-                    // Store token and fetch user
-                    setStoredToken(event.data.token);
-                    setState({ token: event.data.token, isLoading: true, isAuthenticated: true });
-                    try {
-                        const user = await api.getMe();
-                        setState({ user, isLoading: false, isAuthenticated: true });
-                        resolve(true);
-                    }
-                    catch {
-                        removeStoredToken();
-                        setState({ token: null, user: null, isLoading: false, isAuthenticated: false });
-                        resolve(false);
-                    }
+                // Strict message structure validation
+                if (typeof event.data !== "object" || event.data === null)
+                    return;
+                if (event.data.type !== "wauth:callback")
+                    return;
+                if (typeof event.data.token !== "string" || event.data.token.length === 0)
+                    return;
+                // Basic JWT structure validation (header.payload.signature)
+                const tokenParts = event.data.token.split(".");
+                if (tokenParts.length !== 3)
+                    return;
+                window.removeEventListener("message", handleMessage);
+                popup.close();
+                // Store token and fetch user
+                setStoredToken(event.data.token);
+                setState({ token: event.data.token, isLoading: true, isAuthenticated: true });
+                try {
+                    const user = await api.getMe();
+                    setState({ user, isLoading: false, isAuthenticated: true });
+                    resolve(true);
+                }
+                catch {
+                    removeStoredToken();
+                    setState({ token: null, user: null, isLoading: false, isAuthenticated: false });
+                    resolve(false);
                 }
             };
             window.addEventListener("message", handleMessage);

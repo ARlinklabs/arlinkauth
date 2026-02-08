@@ -8,10 +8,8 @@ export type WauthUser = {
   // GitHub provider (optional)
   github_id: number | null;
   github_username: string | null;
-  github_access_token: string | null;
   // Google provider (optional)
   google_id: string | null;
-  google_access_token: string | null;
   // Wallet
   arweave_address: string | null;
   // Timestamps

@@ -68,33 +68,6 @@ function DetailRow({ label, value }: { label: string; value: string | null | und
 
 // ── User Profile Card ─────────────────────────────────
 
-// ── Token Row with reveal/hide ─────────────────────────
-
-function TokenRow({ label, token }: { label: string; token: string | null }) {
-  const [showToken, setShowToken] = useState(false);
-
-  if (!token) return null;
-
-  return (
-    <div className="flex justify-between items-start gap-4 py-2 border-b last:border-b-0">
-      <span className="text-sm text-muted-foreground shrink-0">{label}</span>
-      <div className="flex flex-col items-end gap-1">
-        <button
-          onClick={() => setShowToken(!showToken)}
-          className="text-xs text-primary hover:underline"
-        >
-          {showToken ? "Hide" : "Reveal"}
-        </button>
-        {showToken && (
-          <code className="text-xs bg-muted px-2 py-1 rounded break-all max-w-[280px]">
-            {token}
-          </code>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function UserProfile({ user }: { user: WauthUser }) {
   const connectedProviders: string[] = [];
   if (user.github_id) connectedProviders.push("GitHub");
@@ -138,8 +111,6 @@ function UserProfile({ user }: { user: WauthUser }) {
         <DetailRow label="Arweave Address" value={user.arweave_address} />
         <DetailRow label="Member since" value={user.created_at} />
         <DetailRow label="Last updated" value={user.updated_at} />
-        <TokenRow label="GitHub Token" token={user.github_access_token} />
-        <TokenRow label="Google Token" token={user.google_access_token} />
       </div>
     </div>
   );

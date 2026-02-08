@@ -5,6 +5,16 @@ import { encryptJwk, decryptJwk } from "./crypto";
 import { generateArweaveWallet } from "./arweave";
 import Arweave from "arweave";
 import { createData, ArweaveSigner } from "@dha-team/arbundles";
+import { z } from "zod";
+
+// ── Security Constants ─────────────────────────────────
+const MAX_DISPATCH_SIZE = 100 * 1024; // 100KB max for dispatch data
+const MAX_SIGN_DATA_SIZE = 1024 * 1024; // 1MB max for signing
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = 60; // 60 requests per minute
+
+// Simple in-memory rate limiter (for Cloudflare Workers, consider using Durable Objects for distributed rate limiting)
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
 // Initialize Arweave client
 const arweave = Arweave.init({
@@ -67,11 +77,127 @@ type Variables = {
 
 type AppEnv = { Bindings: Bindings; Variables: Variables };
 
+// ── Input Validation Schemas ───────────────────────────
+
+const ArweaveTagSchema = z.object({
+  name: z.string().max(1024),
+  value: z.string().max(3072),
+});
+
+const WalletActionPayloadSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("sign"),
+    payload: z.object({
+      transaction: z.unknown(),
+    }),
+  }),
+  z.object({
+    action: z.literal("signDataItem"),
+    payload: z.object({
+      dataItem: z.object({
+        data: z.union([z.string(), z.array(z.number())]),
+        tags: z.array(ArweaveTagSchema).optional(),
+        target: z.string().optional(),
+        anchor: z.string().optional(),
+      }),
+    }),
+  }),
+  z.object({
+    action: z.literal("signature"),
+    payload: z.object({
+      data: z.union([z.string(), z.array(z.number()), z.record(z.string(), z.number())]),
+    }),
+  }),
+  z.object({
+    action: z.literal("dispatch"),
+    payload: z.object({
+      data: z.union([z.string(), z.array(z.number())]),
+      tags: z.array(ArweaveTagSchema).optional(),
+      target: z.string().optional(),
+      anchor: z.string().optional(),
+      bundler: z.enum(["turbo", "irys"]).optional(),
+    }),
+  }),
+]);
+
 // ── App ────────────────────────────────────────────────
 
 const app = new Hono<AppEnv>();
 
-app.use("*", cors());
+// CORS - Restrict to frontend origin only
+app.use("*", async (c, next) => {
+  const frontendUrl = c.env.FRONTEND_URL;
+  const origin = c.req.header("origin");
+  
+  // Allow requests from frontend origin or no origin (same-origin requests)
+  if (origin && origin !== frontendUrl) {
+    // For OAuth callbacks, we need to allow the request but not set CORS headers
+    // Check if this is an OAuth callback (these come from redirects, not XHR)
+    const path = new URL(c.req.url).pathname;
+    if (!path.startsWith("/auth/")) {
+      return c.json({ error: "CORS origin not allowed" }, 403);
+    }
+  }
+  
+  // Set CORS headers for allowed origins
+  if (origin === frontendUrl) {
+    c.header("Access-Control-Allow-Origin", frontendUrl);
+    c.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    c.header("Access-Control-Allow-Credentials", "true");
+  }
+  
+  // Handle preflight
+  if (c.req.method === "OPTIONS") {
+    return new Response(null, { status: 204 });
+  }
+  
+  await next();
+});
+
+// Rate limiting middleware for API routes
+app.use("/api/*", async (c, next) => {
+  const clientId = c.req.header("CF-Connecting-IP") ?? c.req.header("X-Forwarded-For") ?? "unknown";
+  const now = Date.now();
+  
+  let rateLimit = rateLimitMap.get(clientId);
+  
+  if (!rateLimit || now > rateLimit.resetAt) {
+    rateLimit = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+    rateLimitMap.set(clientId, rateLimit);
+  }
+  
+  rateLimit.count++;
+  
+  if (rateLimit.count > RATE_LIMIT_MAX_REQUESTS) {
+    return c.json({ error: "Rate limit exceeded. Try again later." }, 429);
+  }
+  
+  await next();
+});
+
+// Rate limiting for auth routes (stricter)
+app.use("/auth/*", async (c, next) => {
+  const clientId = c.req.header("CF-Connecting-IP") ?? c.req.header("X-Forwarded-For") ?? "unknown";
+  const authKey = `auth:${clientId}`;
+  const now = Date.now();
+  
+  let rateLimit = rateLimitMap.get(authKey);
+  
+  if (!rateLimit || now > rateLimit.resetAt) {
+    rateLimit = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+    rateLimitMap.set(authKey, rateLimit);
+  }
+  
+  rateLimit.count++;
+  
+  // Stricter limit for auth: 10 requests per minute
+  if (rateLimit.count > 10) {
+    return c.json({ error: "Too many authentication attempts. Try again later." }, 429);
+  }
+  
+  await next();
+});
 
 // Health check
 app.get("/", (c) => {
@@ -218,21 +344,26 @@ async function ensureUserAndWallet(
 // ── Helper: Generate OAuth callback HTML ───────────────
 
 function generateCallbackHtml(jwt: string, frontendUrl: string): string {
+  // Safely encode data as JSON to prevent XSS
+  const safeMessage = JSON.stringify({ type: "wauth:callback", token: jwt });
+  const safeFrontendUrl = JSON.stringify(frontendUrl);
+  
   return `<!DOCTYPE html>
 <html>
 <head><title>Authenticating...</title></head>
 <body>
 <p>Authenticating, please wait...</p>
 <script>
+(function() {
+  var message = ${safeMessage};
+  var targetOrigin = ${safeFrontendUrl};
   if (window.opener) {
-    window.opener.postMessage(
-      { type: "wauth:callback", token: "${jwt}" },
-      "${frontendUrl}"
-    );
+    window.opener.postMessage(message, targetOrigin);
     window.close();
   } else {
-    window.location.href = "${frontendUrl}?token=${jwt}";
+    window.location.href = targetOrigin + "?token=" + encodeURIComponent(message.token);
   }
+})();
 </script>
 </body>
 </html>`;
@@ -486,12 +617,22 @@ app.use("/api/*", async (c, next) => {
 app.get("/api/me", async (c) => {
   const userId = c.get("userId");
   
-  // Get user info including provider tokens
+  // Get user info - NEVER expose OAuth tokens to frontend
   const user = await c.env.DB.prepare(
-    `SELECT id, email, name, avatar_url, github_id, github_username, github_access_token, google_id, google_access_token, created_at, updated_at FROM users WHERE id = ?1`
+    `SELECT id, email, name, avatar_url, github_id, github_username, google_id, created_at, updated_at FROM users WHERE id = ?1`
   )
     .bind(userId)
-    .first();
+    .first<{
+      id: string;
+      email: string | null;
+      name: string | null;
+      avatar_url: string | null;
+      github_id: number | null;
+      github_username: string | null;
+      google_id: string | null;
+      created_at: string;
+      updated_at: string;
+    }>();
 
   if (!user) {
     return c.json({ error: "User not found" }, 404);
@@ -515,16 +656,23 @@ app.get("/api/me", async (c) => {
 app.post("/api/wallet/action", async (c) => {
   const userId = c.get("userId");
 
-  const body = await c.req.json<{
-    action: WalletAction;
-    payload: Record<string, unknown>;
-  }>();
-
-  const { action, payload } = body;
-
-  if (!action || !payload) {
-    return c.json({ error: "Missing action or payload" }, 400);
+  // Parse and validate request body
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
   }
+
+  const parseResult = WalletActionPayloadSchema.safeParse(body);
+  if (!parseResult.success) {
+    return c.json({ 
+      error: "Invalid request format", 
+      details: parseResult.error.issues.map(i => i.message).join(", ")
+    }, 400);
+  }
+
+  const { action, payload } = parseResult.data;
 
   // Get wallet from database
   const wallet = await c.env.DB.prepare(
@@ -545,28 +693,25 @@ app.post("/api/wallet/action", async (c) => {
       wallet.salt,
       c.env.WALLET_ENCRYPTION_KEY
     ) as ArweaveJWK;
-  } catch (err) {
-    console.error("Failed to decrypt wallet:", err);
-    return c.json({ error: "Failed to decrypt wallet" }, 500);
+  } catch {
+    // Log minimal info - don't expose decryption details
+    console.error("[wallet] Decryption failed for user:", userId);
+    return c.json({ error: "Failed to process wallet" }, 500);
   }
 
   // Validate JWK has required fields
   if (!jwk.n || !jwk.e || !jwk.d) {
-    console.error("Invalid JWK - missing required fields:", { 
-      hasN: !!jwk.n, 
-      hasE: !!jwk.e, 
-      hasD: !!jwk.d
-    });
-    return c.json({ error: "Invalid wallet JWK format" }, 500);
+    console.error("[wallet] Invalid JWK structure for user:", userId);
+    return c.json({ error: "Invalid wallet configuration" }, 500);
   }
 
   // Create signer for data items
   let signer: ArweaveSigner;
   try {
     signer = new ArweaveSigner(jwk);
-  } catch (err) {
-    console.error("Failed to create ArweaveSigner:", err);
-    return c.json({ error: `Failed to create signer: ${err instanceof Error ? err.message : err}` }, 500);
+  } catch {
+    console.error("[wallet] Signer creation failed for user:", userId);
+    return c.json({ error: "Failed to initialize wallet" }, 500);
   }
 
   try {
@@ -584,25 +729,19 @@ app.post("/api/wallet/action", async (c) => {
 
       case WalletAction.SIGN_DATA_ITEM: {
         // Sign an ANS-104 data item (for AO/bundled transactions)
-        const dataItemPayload = payload.dataItem as {
-          data: string | Uint8Array | number[];
-          tags?: { name: string; value: string }[];
-          target?: string;
-          anchor?: string;
-        };
-        
-        if (!dataItemPayload) {
-          return c.json({ error: "Missing dataItem in payload" }, 400);
-        }
+        const dataItemPayload = (payload as { dataItem: { data: string | number[]; tags?: { name: string; value: string }[]; target?: string; anchor?: string } }).dataItem;
 
         // Convert data to Buffer
         let data: Buffer;
         if (typeof dataItemPayload.data === "string") {
           data = Buffer.from(dataItemPayload.data);
-        } else if (Array.isArray(dataItemPayload.data)) {
-          data = Buffer.from(dataItemPayload.data);
         } else {
           data = Buffer.from(dataItemPayload.data);
+        }
+
+        // Enforce size limit
+        if (data.length > MAX_SIGN_DATA_SIZE) {
+          return c.json({ error: `Data too large. Maximum size is ${MAX_SIGN_DATA_SIZE} bytes` }, 400);
         }
 
         const createdDataItem = createData(data, signer, {
@@ -638,18 +777,17 @@ app.post("/api/wallet/action", async (c) => {
           bundler?: BundlerType;
         };
 
-        if (!dispatchPayload.data) {
-          return c.json({ error: "Missing data in payload" }, 400);
-        }
-
         // Convert data to Buffer
         let data: Buffer;
         if (typeof dispatchPayload.data === "string") {
           data = Buffer.from(dispatchPayload.data);
-        } else if (Array.isArray(dispatchPayload.data)) {
-          data = Buffer.from(dispatchPayload.data);
         } else {
-          return c.json({ error: "Invalid data format" }, 400);
+          data = Buffer.from(dispatchPayload.data);
+        }
+
+        // Enforce size limit for dispatch
+        if (data.length > MAX_DISPATCH_SIZE) {
+          return c.json({ error: `Data too large. Maximum size for dispatch is ${MAX_DISPATCH_SIZE} bytes (100KB)` }, 400);
         }
 
         // Create and sign the data item
@@ -686,12 +824,10 @@ app.post("/api/wallet/action", async (c) => {
         });
 
         if (!uploadResponse.ok) {
-          const errorText = await uploadResponse.text();
-          console.error("Bundler upload failed:", uploadResponse.status, errorText);
+          console.error("[dispatch] Bundler upload failed:", bundlerType, "status:", uploadResponse.status);
           return c.json({ 
-            error: `Bundler upload failed: ${uploadResponse.status}`,
-            details: errorText,
-          }, 500);
+            error: `Upload to ${bundlerType} failed. Please try again.`,
+          }, 502);
         }
 
         const uploadResult = await uploadResponse.json() as { id?: string; [key: string]: unknown };
@@ -705,22 +841,23 @@ app.post("/api/wallet/action", async (c) => {
 
       case WalletAction.SIGNATURE: {
         // Raw signature of arbitrary data
-        const data = payload.data;
-        if (!data) {
-          return c.json({ error: "Missing data in payload" }, 400);
-        }
+        const signaturePayload = payload as { data: string | number[] | Record<string, number> };
+        const data = signaturePayload.data;
 
         // Convert data to Uint8Array
         let dataBuffer: Uint8Array;
         if (typeof data === "string") {
           dataBuffer = new TextEncoder().encode(data);
         } else if (Array.isArray(data)) {
-          dataBuffer = new Uint8Array(data as number[]);
-        } else if (typeof data === "object" && data !== null) {
-          // Handle object with numeric keys (like {0: 1, 1: 2, ...})
-          dataBuffer = new Uint8Array(Object.values(data as Record<string, number>));
+          dataBuffer = new Uint8Array(data);
         } else {
-          return c.json({ error: "Invalid data format" }, 400);
+          // Handle object with numeric keys (like {0: 1, 1: 2, ...})
+          dataBuffer = new Uint8Array(Object.values(data));
+        }
+
+        // Enforce size limit
+        if (dataBuffer.length > MAX_SIGN_DATA_SIZE) {
+          return c.json({ error: `Data too large. Maximum size is ${MAX_SIGN_DATA_SIZE} bytes` }, 400);
         }
 
         const signature = await signer.sign(dataBuffer);
@@ -734,11 +871,9 @@ app.post("/api/wallet/action", async (c) => {
         return c.json({ error: `Unknown action: ${action}` }, 400);
     }
   } catch (err) {
-    console.error("Wallet action error:", err);
-    return c.json(
-      { error: err instanceof Error ? err.message : "Wallet action failed" },
-      500
-    );
+    // Log error with minimal context - don't expose stack traces
+    console.error("[wallet] Action failed:", action, "user:", userId, "error:", err instanceof Error ? err.message : "unknown");
+    return c.json({ error: "Wallet operation failed" }, 500);
   }
 });
 

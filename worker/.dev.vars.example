@@ -1,0 +1,17 @@
+# GitHub OAuth - Get from https://github.com/settings/developers
+GITHUB_CLIENT_ID=your-github-client-id
+GITHUB_CLIENT_SECRET=your-github-client-secret
+
+# Google OAuth - Get from https://console.cloud.google.com/apis/credentials
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+
+# JWT Secret - Generate with: openssl rand -base64 32
+JWT_SECRET=generate-a-random-32-byte-secret-here
+
+# Frontend URL for CORS and OAuth callbacks
+FRONTEND_URL=http://localhost:3000
+
+# Wallet Encryption Key - Generate with: openssl rand -base64 32
+# CRITICAL: If you lose this key, all encrypted wallets become unrecoverable
+WALLET_ENCRYPTION_KEY=generate-a-random-32-byte-secret-here

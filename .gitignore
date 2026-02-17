@@ -5,3 +5,6 @@ new_wauth
 node_modules
 .DS_Store
 .wrangler
+
+users-port
+scripts/legacy-migration.sql

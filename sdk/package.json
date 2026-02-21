@@ -1,10 +1,13 @@
 {
   "name": "arlinkauth",
-  "version": "0.1.1",
-  "description": "Authentication SDK for Arweave apps - OAuth login with automatic wallet generation",
+  "version": "0.2.0",
+  "description": "Authentication SDK for Arweave apps - OAuth login with automatic wallet generation. Works in Browser and Node.js.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "arlinkauth": "./dist/bin/arlinkauth.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -13,6 +16,10 @@
     "./react": {
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
     }
   },
   "files": [
@@ -20,7 +27,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/bin/arlinkauth.js",
     "dev": "tsc --watch --preserveWatchOutput",
     "prepublishOnly": "npm run build"
   },
@@ -30,7 +37,8 @@
     "oauth",
     "wallet",
     "ao",
-    "arlink"
+    "arlink",
+    "cli"
   ],
   "author": "Ankush Singh",
   "license": "MIT",
@@ -42,6 +50,9 @@
     "url": "https://github.com/ankushKun/arlinkauth/issues"
   },
   "homepage": "https://github.com/ankushKun/arlinkauth#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "peerDependencies": {
     "react": ">=18"
   },
@@ -51,6 +62,7 @@
     }
   },
   "devDependencies": {
+    "@types/node": "^20.0.0",
     "@types/react": "^19",
     "typescript": "^5"
   }

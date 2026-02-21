@@ -3,6 +3,22 @@
  */
 import { createCoreClient, } from "./core.js";
 const DEFAULT_TOKEN_KEY = "arlinkauth_token";
+const PROD_API_URL = "https://arlinkauth.contact-arlink.workers.dev";
+function resolveApiUrl(apiUrl) {
+    if (apiUrl)
+        return apiUrl;
+    try {
+        const g = globalThis;
+        const proc = g.process;
+        if (proc?.env?.ARLINKAUTH_API_URL) {
+            return proc.env.ARLINKAUTH_API_URL;
+        }
+    }
+    catch {
+        // process.env may not exist in browser environments
+    }
+    return PROD_API_URL;
+}
 /** Create localStorage-based token storage for browser */
 function createBrowserTokenStorage(tokenKey) {
     return {
@@ -33,7 +49,7 @@ function createBrowserTokenStorage(tokenKey) {
     };
 }
 export function createWauthClient(options) {
-    const { apiUrl } = options;
+    const apiUrl = resolveApiUrl(options.apiUrl);
     const tokenKey = options.tokenKey ?? DEFAULT_TOKEN_KEY;
     // Create token storage and core client
     const tokenStorage = createBrowserTokenStorage(tokenKey);

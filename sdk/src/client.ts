@@ -1,5 +1,13 @@
+/**
+ * Browser client - extends core with localStorage and popup OAuth
+ */
+
 import {
-  WalletAction,
+  createCoreClient,
+  type CoreClient,
+  type TokenStorage,
+} from "./core.js";
+import {
   type WauthClientOptions,
   type WauthUser,
   type AuthState,
@@ -7,14 +15,6 @@ import {
   type OAuthProvider,
   type GitHubLoginOptions,
   type GoogleLoginOptions,
-  type SignTransactionInput,
-  type SignTransactionResult,
-  type SignDataItemInput,
-  type SignDataItemResult,
-  type SignatureInput,
-  type SignatureResult,
-  type DispatchInput,
-  type DispatchResult,
 } from "./types.js";
 
 /** Result returned after successful login */
@@ -42,46 +42,52 @@ function resolveApiUrl(apiUrl?: string): string {
   return PROD_API_URL;
 }
 
+/** Create localStorage-based token storage for browser */
+function createBrowserTokenStorage(tokenKey: string): TokenStorage {
+  return {
+    getToken(): string | null {
+      try {
+        return localStorage.getItem(tokenKey);
+      } catch {
+        return null;
+      }
+    },
+    setToken(token: string): void {
+      try {
+        localStorage.setItem(tokenKey, token);
+      } catch {
+        // SSR or storage unavailable
+      }
+    },
+    removeToken(): void {
+      try {
+        localStorage.removeItem(tokenKey);
+      } catch {
+        // SSR or storage unavailable
+      }
+    },
+  };
+}
+
 export function createWauthClient(options: WauthClientOptions) {
   const apiUrl = resolveApiUrl(options.apiUrl);
   const tokenKey = options.tokenKey ?? DEFAULT_TOKEN_KEY;
 
+  // Create token storage and core client
+  const tokenStorage = createBrowserTokenStorage(tokenKey);
+  const core = createCoreClient({ apiUrl, tokenStorage });
+
+  // ── State Management ────────────────────────────────
+
   const listeners = new Set<AuthChangeListener>();
 
+  // Browser token storage is synchronous, so we can cast safely
   let state: AuthState = {
     user: null,
-    token: getStoredToken(),
+    token: tokenStorage.getToken() as string | null,
     isLoading: false,
     isAuthenticated: false,
   };
-
-  // ── Token Storage ───────────────────────────────────
-
-  function getStoredToken(): string | null {
-    try {
-      return localStorage.getItem(tokenKey);
-    } catch {
-      return null;
-    }
-  }
-
-  function setStoredToken(token: string) {
-    try {
-      localStorage.setItem(tokenKey, token);
-    } catch {
-      // SSR or storage unavailable
-    }
-  }
-
-  function removeStoredToken() {
-    try {
-      localStorage.removeItem(tokenKey);
-    } catch {
-      // SSR or storage unavailable
-    }
-  }
-
-  // ── State Management ────────────────────────────────
 
   function setState(partial: Partial<AuthState>) {
     state = { ...state, ...partial };
@@ -99,39 +105,6 @@ export function createWauthClient(options: WauthClientOptions) {
     return () => {
       listeners.delete(listener);
     };
-  }
-
-  // ── Authenticated Fetch ─────────────────────────────
-
-  async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
-    const token = state.token;
-    if (!token) {
-      throw new Error("Not authenticated");
-    }
-
-    const res = await fetch(`${apiUrl}${path}`, {
-      ...init,
-      headers: {
-        ...init?.headers,
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (res.status === 401) {
-      // Token is invalid/expired — clear it
-      removeStoredToken();
-      setState({ token: null, user: null, isAuthenticated: false });
-      throw new Error("Session expired");
-    }
-
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(
-        (body as { error?: string }).error ?? `API error: ${res.status}`
-      );
-    }
-
-    return res.json() as Promise<T>;
   }
 
   // ── Auth Actions ────────────────────────────────────
@@ -182,15 +155,15 @@ export function createWauthClient(options: WauthClientOptions) {
         popup.close();
 
         // Store token and fetch user
-        setStoredToken(event.data.token);
+        tokenStorage.setToken(event.data.token);
         setState({ token: event.data.token, isLoading: true, isAuthenticated: true });
 
         try {
-          const user = await api.getMe();
+          const user = await core.getMe();
           setState({ user, isLoading: false, isAuthenticated: true });
           resolve({ success: true, user });
         } catch {
-          removeStoredToken();
+          tokenStorage.removeToken();
           setState({ token: null, user: null, isLoading: false, isAuthenticated: false });
           resolve({ success: false });
         }
@@ -226,10 +199,10 @@ export function createWauthClient(options: WauthClientOptions) {
 
   /**
    * Check for existing token in localStorage.
-   * (URL-based callback is no longer used - popup flow uses postMessage)
    */
   function handleCallback(): boolean {
-    const existing = getStoredToken();
+    // Browser token storage is synchronous
+    const existing = tokenStorage.getToken() as string | null;
     if (existing) {
       setState({ token: existing, isAuthenticated: true });
       return true;
@@ -239,7 +212,7 @@ export function createWauthClient(options: WauthClientOptions) {
 
   /** Clear the token and user state */
   function logout() {
-    removeStoredToken();
+    tokenStorage.removeToken();
     setState({ token: null, user: null, isAuthenticated: false });
   }
 
@@ -254,98 +227,8 @@ export function createWauthClient(options: WauthClientOptions) {
   // ── API Methods ─────────────────────────────────────
 
   const api = {
-    getMe: () => fetchApi<WauthUser>("/api/me"),
+    getMe: () => core.getMe(),
   };
-
-  // ── Wallet Signing Methods ─────────────────────────────
-
-  /**
-   * Sign an Arweave transaction.
-   * The transaction must be created using arweave-js and passed as the raw object.
-   */
-  async function sign(input: SignTransactionInput): Promise<SignTransactionResult> {
-    return fetchApi<SignTransactionResult>("/api/wallet/action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: WalletAction.SIGN,
-        payload: { transaction: input.transaction },
-      }),
-    });
-  }
-
-  /**
-   * Sign an ANS-104 data item (for AO/bundled transactions).
-   * Returns the signed data item ID and raw bytes.
-   */
-  async function signDataItem(input: SignDataItemInput): Promise<SignDataItemResult> {
-    // Convert Uint8Array to array for JSON serialization
-    const data = input.data instanceof Uint8Array
-      ? Array.from(input.data)
-      : input.data;
-
-    return fetchApi<SignDataItemResult>("/api/wallet/action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: WalletAction.SIGN_DATA_ITEM,
-        payload: {
-          dataItem: {
-            data,
-            tags: input.tags,
-            target: input.target,
-            anchor: input.anchor,
-          },
-        },
-      }),
-    });
-  }
-
-  /**
-   * Create a raw signature of arbitrary data.
-   * Returns the raw signature bytes.
-   */
-  async function signature(input: SignatureInput): Promise<SignatureResult> {
-    // Convert Uint8Array to array for JSON serialization
-    const data = input.data instanceof Uint8Array
-      ? Array.from(input.data)
-      : input.data;
-
-    return fetchApi<SignatureResult>("/api/wallet/action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: WalletAction.SIGNATURE,
-        payload: { data },
-      }),
-    });
-  }
-
-  /**
-   * Sign and dispatch a data item to Arweave via a bundler (Turbo/Irys).
-   * Returns the transaction ID and bundler response.
-   */
-  async function dispatch(input: DispatchInput): Promise<DispatchResult> {
-    // Convert Uint8Array to array for JSON serialization
-    const data = input.data instanceof Uint8Array
-      ? Array.from(input.data)
-      : input.data;
-
-    return fetchApi<DispatchResult>("/api/wallet/action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: WalletAction.DISPATCH,
-        payload: {
-          data,
-          tags: input.tags,
-          target: input.target,
-          anchor: input.anchor,
-          bundler: input.bundler,
-        },
-      }),
-    });
-  }
 
   // ── Initialize ──────────────────────────────────────
 
@@ -363,11 +246,11 @@ export function createWauthClient(options: WauthClientOptions) {
 
     setState({ isLoading: true });
     try {
-      const user = await api.getMe();
+      const user = await core.getMe();
       setState({ user, isLoading: false, isAuthenticated: true });
     } catch {
       // Token invalid — clear everything
-      removeStoredToken();
+      tokenStorage.removeToken();
       setState({
         token: null,
         user: null,
@@ -391,11 +274,11 @@ export function createWauthClient(options: WauthClientOptions) {
     getState,
     onAuthChange,
     api,
-    // Wallet signing methods
-    sign,
-    signDataItem,
-    signature,
-    dispatch,
+    // Wallet signing methods (delegated to core)
+    sign: core.sign,
+    signDataItem: core.signDataItem,
+    signature: core.signature,
+    dispatch: core.dispatch,
   };
 }
 

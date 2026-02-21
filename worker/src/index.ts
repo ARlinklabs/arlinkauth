@@ -6,6 +6,7 @@ import { generateArweaveWallet } from "./arweave";
 import Arweave from "arweave";
 import { createData, ArweaveSigner } from "@dha-team/arbundles";
 import { z } from "zod";
+import { dashboard } from "./dashboard";
 
 // ── Security Constants ─────────────────────────────────
 const MAX_DISPATCH_SIZE = 100 * 1024; // 100KB max for dispatch data
@@ -68,6 +69,8 @@ type Bindings = {
   FRONTEND_URL: string;
   /** Master key for encrypting wallet JWKs */
   WALLET_ENCRYPTION_KEY: string;
+  /** Password for the admin dashboard */
+  DASHBOARD_PASSWORD: string;
 };
 
 type Variables = {
@@ -942,5 +945,8 @@ app.post("/api/wallet/action", async (c) => {
     return c.json({ error: "Wallet operation failed" }, 500);
   }
 });
+
+// ── Admin Dashboard ────────────────────────────────────
+app.route("/dashboard", dashboard);
 
 export default app;

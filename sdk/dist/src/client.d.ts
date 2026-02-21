@@ -32,3 +32,4 @@ export declare function createWauthClient(options: WauthClientOptions): {
     dispatch: (input: import("./types.js").DispatchInput) => Promise<import("./types.js").DispatchResult>;
 };
 export type WauthClient = ReturnType<typeof createWauthClient>;
+//# sourceMappingURL=client.d.ts.map

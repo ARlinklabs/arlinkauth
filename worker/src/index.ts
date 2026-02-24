@@ -355,7 +355,7 @@ function generateCallbackHtml(jwt: string, frontendUrl: string): string {
   var targetOrigin = ${safeFrontendUrl};
   if (window.opener) {
     window.opener.postMessage(message, targetOrigin);
-    window.close();
+    setTimeout(function() { window.close(); }, 300);
   } else {
     window.location.href = targetOrigin + "?token=" + encodeURIComponent(message.token);
   }

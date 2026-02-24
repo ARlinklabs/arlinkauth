@@ -171,12 +171,19 @@ export function createWauthClient(options: WauthClientOptions) {
 
       window.addEventListener("message", handleMessage);
 
-      // Clean up if popup is closed without completing auth
+      // Clean up if popup is closed without completing auth.
+      // We delay cleanup briefly after detecting the popup is closed
+      // so that any in-flight postMessage has time to be delivered.
+      let popupClosedSeen = false;
       const checkClosed = setInterval(() => {
-        if (popup.closed) {
-          clearInterval(checkClosed);
-          window.removeEventListener("message", handleMessage);
-          resolve({ success: false });
+        if (popup.closed && !popupClosedSeen) {
+          popupClosedSeen = true;
+          // Give the queued MessageEvent time to dispatch before giving up
+          setTimeout(() => {
+            clearInterval(checkClosed);
+            window.removeEventListener("message", handleMessage);
+            resolve({ success: false });
+          }, 500);
         }
       }, 500);
     });

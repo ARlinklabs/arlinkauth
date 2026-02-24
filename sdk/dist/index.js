@@ -1,6 +1,0 @@
-// Browser client (with localStorage + popup OAuth)
-export { createWauthClient, createWauthClient as createArlinkAuthClient } from "./client.js";
-// Core client (universal - Node + Browser compatible)
-export { createCoreClient } from "./core.js";
-// Types
-export { WalletAction, } from "./types.js";

@@ -1,25 +1,25 @@
 {
   "name": "arlinkauth",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Authentication SDK for Arweave apps - OAuth login with automatic wallet generation. Works in Browser and Node.js.",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "bin": {
     "arlinkauth": "./dist/bin/arlinkauth.js"
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
     },
     "./react": {
-      "types": "./dist/react.d.ts",
-      "import": "./dist/react.js"
+      "types": "./dist/src/react.d.ts",
+      "import": "./dist/src/react.js"
     },
     "./node": {
-      "types": "./dist/node.d.ts",
-      "import": "./dist/node.js"
+      "types": "./dist/src/node.d.ts",
+      "import": "./dist/src/node.js"
     }
   },
   "files": [
@@ -27,7 +27,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc && chmod +x dist/bin/arlinkauth.js",
+    "build": "rm -rf dist && tsc && chmod +x dist/bin/arlinkauth.js",
     "dev": "tsc --watch --preserveWatchOutput",
     "prepublishOnly": "npm run build"
   },
